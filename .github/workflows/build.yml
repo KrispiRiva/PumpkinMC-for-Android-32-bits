@@ -24,7 +24,6 @@ jobs:
             OLD_ID="none"
           fi
           
-          # The missing space was fixed on this line!
           if [ "$LATEST_ID" = "$OLD_ID" ]; then
             echo "match=true" >> $GITHUB_OUTPUT
             echo "No new updates. Skipping build."
@@ -39,6 +38,13 @@ jobs:
         with:
           repository: 'Pumpkin-MC/Pumpkin'
           path: 'pumpkin-source'
+
+      # THIS IS THE NEW FIX! It dynamically rewrites their code to be 32-bit friendly
+      - name: Patch 32-bit Bug in PumpkinMC
+        if: steps.check_version.outputs.match == 'false'
+        working-directory: ./pumpkin-source
+        run: |
+          sed -i 's/i64::from_ne_bytes(height_bit_bytes)/isize::from_ne_bytes(height_bit_bytes) as i64/g' pumpkin-world/src/chunk/mod.rs
 
       - name: Setup Rust
         if: steps.check_version.outputs.match == 'false'
