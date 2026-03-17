@@ -1,19 +1,17 @@
 name: Pumpkin-Android-AutoBuild
 
 on:
-  workflow_dispatch: # Allows manual clicking of "Run"
+  workflow_dispatch:
   schedule:
-    - cron: '0 */12 * * *' # Checks for updates every 12 hours
+    - cron: '0 */12 * * *'
 
 jobs:
   check-and-build:
     runs-on: ubuntu-latest
     steps:
-      # 1. Check out YOUR repo to see the last version we built
       - name: Checkout Tracker
         uses: actions/checkout@v4
 
-      # 2. Check the Official Pumpkin repo for their newest code ID
       - name: Check for Updates
         id: check_version
         run: |
@@ -26,7 +24,8 @@ jobs:
             OLD_ID="none"
           fi
           
-          if[ "$LATEST_ID" = "$OLD_ID" ]; then
+          # The missing space was fixed on this line!
+          if [ "$LATEST_ID" = "$OLD_ID" ]; then
             echo "match=true" >> $GITHUB_OUTPUT
             echo "No new updates. Skipping build."
           else
@@ -34,7 +33,6 @@ jobs:
             echo "New version found! Starting build..."
           fi
 
-      # 3. If there is new code, download it
       - name: Download Pumpkin Source
         if: steps.check_version.outputs.match == 'false'
         uses: actions/checkout@v4
@@ -42,23 +40,19 @@ jobs:
           repository: 'Pumpkin-MC/Pumpkin'
           path: 'pumpkin-source'
 
-      # 4. Set up Rust (We are keeping this exactly as-is, ignoring the AI!)
       - name: Setup Rust
         if: steps.check_version.outputs.match == 'false'
         uses: dtolnay/rust-toolchain@stable
 
-      # 5. Install the Cross-Compiler
       - name: Install Cross
         if: steps.check_version.outputs.match == 'false'
         run: cargo install cross --locked
 
-      # 6. Build the 32-bit Android File
       - name: Build for Android 32-bit
         if: steps.check_version.outputs.match == 'false'
         working-directory: ./pumpkin-source
         run: cross build --target armv7-linux-androideabi --release
 
-      # 7. Upload the finished file for you to download (UPDATED TO v6)
       - name: Upload Finished Server
         if: steps.check_version.outputs.match == 'false'
         uses: actions/upload-artifact@v6
@@ -66,7 +60,6 @@ jobs:
           name: pumpkin-android-32bit
           path: pumpkin-source/target/armv7-linux-androideabi/release/pumpkin
 
-      # 8. Update the tracker so we don't build the same thing twice
       - name: Save Version ID
         if: steps.check_version.outputs.match == 'false'
         run: |
