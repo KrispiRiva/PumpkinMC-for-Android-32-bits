@@ -47,10 +47,10 @@ jobs:
         if: steps.check_version.outputs.match == 'false'
         working-directory: ./pumpkin-source
         run: |
-          # 1. Fix the 32-bit integer conversion bug in the world code
+          # 1. Fix the 32-bit integer conversion bug
           sed -i 's/i64::from_ne_bytes(height_bit_bytes)/isize::from_ne_bytes(height_bit_bytes) as i64/g' pumpkin-world/src/chunk/mod.rs || true
           
-          # 2. Inject dummy unwind symbol to fix the "CANNOT LINK EXECUTABLE" error seen in your Termux screenshot
+          # 2. Inject dummy unwind symbol (Fixes your "CANNOT LINK EXECUTABLE" phone error)
           MAIN_RS=$(find . -path "*/src/main.rs" -o -name "main.rs" | head -n 1)
           echo '
           #[no_mangle]
@@ -58,9 +58,11 @@ jobs:
           ' >> "$MAIN_RS"
           echo "Patched $MAIN_RS with dummy unwind symbol."
 
-      - name: Setup Rust (stable)
+      - name: Setup Rust (stable) with ARMv7 Target
         if: steps.check_version.outputs.match == 'false'
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-linux-androideabi
 
       - name: Install dependencies
         if: steps.check_version.outputs.match == 'false'
@@ -81,14 +83,14 @@ jobs:
         if: steps.check_version.outputs.match == 'false'
         working-directory: ./pumpkin-source
         run: |
-          # Set NDK paths
+          # Force correct NDK paths
           export ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}
           export ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}
           
-          # FIX: Moved --release to the end of the command
+          # Build command with correct order
           cargo ndk -t armeabi-v7a --platform ${ANDROID_PLATFORM} build --release
 
-          # Find the binary and move it to a safe place
+          # Find and move binary
           echo "=== Finding produced binary ==="
           BIN_PATH=$(find target -type f -name pumpkin -not -path "*/deps/*" | head -n1 || true)
           if [ -z "$BIN_PATH" ]; then
@@ -101,7 +103,7 @@ jobs:
           mkdir -p ../artifacts
           cp "$BIN_PATH" ../artifacts/pumpkin_android_armv7_api${ANDROID_PLATFORM}
           
-          # Verification check for the symbol you were missing
+          # Symbol verification check
           readelf -Ws ../artifacts/pumpkin_android_armv7_api${ANDROID_PLATFORM} | grep "__gnu_Unwind_Find_exidx" || echo "Symbol handled."
 
       - name: Upload Finished Server
