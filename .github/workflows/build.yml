@@ -66,10 +66,10 @@ jobs:
         if: steps.check_version.outputs.match == 'false'
         run: sudo apt-get update && sudo apt-get install -y binutils file unzip
 
-      # Corrected NDK Setup Action
       - name: Download & setup Android NDK (r21e)
         if: steps.check_version.outputs.match == 'false'
         uses: nttld/setup-ndk@v1
+        id: setup-ndk
         with:
           ndk-version: 'r21e'
 
@@ -82,8 +82,13 @@ jobs:
         working-directory: ./pumpkin-source
         env:
           CARGO_PROFILE_RELEASE_PANIC: abort
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         run: |
+          # Force cargo-ndk to use the EXACT path from the setup step
+          export ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}
+          export ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}
+          
+          echo "Using NDK at: $ANDROID_NDK_HOME"
+          
           # Execute build
           cargo ndk -t armeabi-v7a --platform ${ANDROID_PLATFORM} --release build
 
@@ -100,7 +105,7 @@ jobs:
           mkdir -p ../artifacts
           cp "$BIN_PATH" ../artifacts/pumpkin_android_armv7_api${ANDROID_PLATFORM}
           
-          # Final validation check for the troublesome symbol
+          # Final validation check
           readelf -Ws ../artifacts/pumpkin_android_armv7_api${ANDROID_PLATFORM} | grep "__gnu_Unwind_Find_exidx" || echo "Symbol successfully handled."
 
       - name: Upload Finished Server
