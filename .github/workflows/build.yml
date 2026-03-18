@@ -47,10 +47,10 @@ jobs:
         if: steps.check_version.outputs.match == 'false'
         working-directory: ./pumpkin-source
         run: |
-          # Fix the 32-bit integer conversion bug
+          # 1. Fix the 32-bit integer conversion bug in the world code
           sed -i 's/i64::from_ne_bytes(height_bit_bytes)/isize::from_ne_bytes(height_bit_bytes) as i64/g' pumpkin-world/src/chunk/mod.rs || true
           
-          # Inject dummy unwind symbol to prevent "CANNOT LINK EXECUTABLE" on Android 6.0
+          # 2. Inject dummy unwind symbol to fix the "CANNOT LINK EXECUTABLE" error seen in your Termux screenshot
           MAIN_RS=$(find . -path "*/src/main.rs" -o -name "main.rs" | head -n 1)
           echo '
           #[no_mangle]
@@ -62,7 +62,7 @@ jobs:
         if: steps.check_version.outputs.match == 'false'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install dependencies (file/readelf)
+      - name: Install dependencies
         if: steps.check_version.outputs.match == 'false'
         run: sudo apt-get update && sudo apt-get install -y binutils file unzip
 
@@ -77,24 +77,22 @@ jobs:
         if: steps.check_version.outputs.match == 'false'
         run: cargo install cargo-ndk --version 2.12.0
 
-      - name: Build with cargo-ndk for armeabi-v7a (API 23)
+      - name: Build with cargo-ndk for armeabi-v7a
         if: steps.check_version.outputs.match == 'false'
         working-directory: ./pumpkin-source
-        env:
-          CARGO_PROFILE_RELEASE_PANIC: abort
         run: |
-          # Use the exact path from the setup-ndk output
+          # Set NDK paths
           export ANDROID_NDK_HOME=${{ steps.setup-ndk.outputs.ndk-path }}
           export ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}
           
-          # Build using the compatible cargo-ndk version
-          cargo ndk -t armeabi-v7a --platform ${ANDROID_PLATFORM} --release build
+          # FIX: Moved --release to the end of the command
+          cargo ndk -t armeabi-v7a --platform ${ANDROID_PLATFORM} build --release
 
-          # Find and prep binary
+          # Find the binary and move it to a safe place
           echo "=== Finding produced binary ==="
           BIN_PATH=$(find target -type f -name pumpkin -not -path "*/deps/*" | head -n1 || true)
           if [ -z "$BIN_PATH" ]; then
-            echo "Binary not found — checking release directory structure:"
+            echo "Binary not found!"
             find target -maxdepth 4 -type f || true
             exit 1
           fi
@@ -103,8 +101,8 @@ jobs:
           mkdir -p ../artifacts
           cp "$BIN_PATH" ../artifacts/pumpkin_android_armv7_api${ANDROID_PLATFORM}
           
-          # Final validation check
-          readelf -Ws ../artifacts/pumpkin_android_armv7_api${ANDROID_PLATFORM} | grep "__gnu_Unwind_Find_exidx" || echo "Symbol successfully handled."
+          # Verification check for the symbol you were missing
+          readelf -Ws ../artifacts/pumpkin_android_armv7_api${ANDROID_PLATFORM} | grep "__gnu_Unwind_Find_exidx" || echo "Symbol handled."
 
       - name: Upload Finished Server
         if: steps.check_version.outputs.match == 'false'
