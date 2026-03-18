@@ -18,14 +18,13 @@ jobs:
           LATEST_ID=$(git ls-remote https://github.com/Pumpkin-MC/Pumpkin.git HEAD | awk '{print $1}')
           echo "latest_id=$LATEST_ID" >> $GITHUB_ENV
           
-          if [ -f version_tracker.txt ]; then
+          if[ -f version_tracker.txt ]; then
             OLD_ID=$(cat version_tracker.txt)
           else
             OLD_ID="none"
           fi
           
-          # FIXED THE SPACE HERE: 'if ['
-          if [ "$LATEST_ID" = "$OLD_ID" ]; then
+          if[ "$LATEST_ID" = "$OLD_ID" ]; then
             echo "match=true" >> $GITHUB_OUTPUT
             echo "No new updates. Skipping build."
           else
@@ -57,9 +56,10 @@ jobs:
       - name: Build for Android 32-bit
         if: steps.check_version.outputs.match == 'false'
         working-directory: ./pumpkin-source
-        # THIS SOLVES THE LG PHONE CRASH:
         env:
           CARGO_PROFILE_RELEASE_PANIC: abort
+          # THE FIX: This forces the modern compiler to bundle the missing Android 6 system libraries!
+          RUSTFLAGS: "-C link-arg=-Wl,-Bstatic -C link-arg=-lunwind -C link-arg=-Wl,-Bdynamic"
         run: cross build --target armv7-linux-androideabi --release
 
       - name: Upload Finished Server
