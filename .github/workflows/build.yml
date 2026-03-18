@@ -8,6 +8,11 @@ on:
 jobs:
   check-and-build:
     runs-on: ubuntu-latest
+    env:
+      # Ensure consistent platform target for cargo-ndk
+      ANDROID_PLATFORM: "23"
+      CARGO_TERM_COLOR: always
+
     steps:
       - name: Checkout Tracker
         uses: actions/checkout@v4
@@ -17,13 +22,13 @@ jobs:
         run: |
           LATEST_ID=$(git ls-remote https://github.com/Pumpkin-MC/Pumpkin.git HEAD | awk '{print $1}')
           echo "latest_id=$LATEST_ID" >> $GITHUB_ENV
-          
+
           if [ -f version_tracker.txt ]; then
             OLD_ID=$(cat version_tracker.txt)
           else
             OLD_ID="none"
           fi
-          
+
           if [ "$LATEST_ID" = "$OLD_ID" ]; then
             echo "match=true" >> $GITHUB_OUTPUT
             echo "No new updates. Skipping build."
@@ -49,58 +54,72 @@ jobs:
         if: steps.check_version.outputs.match == 'false'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cross
+      - name: Install dependencies (file/readelf)
         if: steps.check_version.outputs.match == 'false'
-        run: cargo install cross --locked
+        run: sudo apt-get update && sudo apt-get install -y binutils file unzip
 
-      # Optional: install readelf/file utilities
-      - name: Ensure readelf/file exists
+      # Install Android NDK (r21e) - suitable for API 23 builds
+      - name: Download & setup Android NDK (r21e)
         if: steps.check_version.outputs.match == 'false'
-        run: sudo apt-get update && sudo apt-get install -y binutils file
+        uses: android-actions/setup-ndk@v2
+        with:
+          ndk-version: 'r21e'
 
-      - name: Build for Android 32-bit (armv7)
+      - name: Show NDK info
+        if: steps.check_version.outputs.match == 'false'
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          $ANDROID_NDK_HOME/ndk-build --version || true
+
+      - name: Install cargo-ndk
+        if: steps.check_version.outputs.match == 'false'
+        run: cargo install cargo-ndk --locked
+
+      - name: Build with cargo-ndk for armeabi-v7a (API 23)
         if: steps.check_version.outputs.match == 'false'
         working-directory: ./pumpkin-source
         env:
-          # keep abort panic profile
+          # use abort panics to minimize unwind usage
           CARGO_PROFILE_RELEASE_PANIC: abort
-          # Stronger linking flags: attempt to statically include unwind/gcc unwind
-          # Explanation: -Wl,-Bstatic before -lunwind tries to pull static libunwind into the binary.
-          # Then -Wl,-Bdynamic returns to dynamic linking for other libs. We also add -lgcc_eh and -lgcc
-          # as static linking targets to provide __gnu_Unwind_Find_exidx if needed.
-          RUSTFLAGS: >-
-            -C link-arg=-Wl,-Bstatic
-            -C link-arg=-lunwind
-            -C link-arg=-lgcc_eh
-            -C link-arg=-lgcc
-            -C link-arg=-Wl,-Bdynamic
-            -C link-arg=-Wl,-z,now
+          # ensure cargo-ndk finds the ndk we installed
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         run: |
-          # Use cross to target armv7 Android (armv7-linux-androideabi)
-          # cross will pull the correct cross toolchain/docker image.
-          cross build --target armv7-linux-androideabi --release
+          # build
+          cargo ndk -t armeabi-v7a --platform ${ANDROID_PLATFORM} --release build
 
-          # diagnostics: show produced file and unresolved symbols (if any)
-          BIN=target/armv7-linux-androideabi/release/pumpkin
-          if [ -f "$BIN" ]; then
-            echo "=== file output ==="
-            file "$BIN"
-            echo "=== readelf undefined symbols (dynamic) ==="
-            readelf -Ws "$BIN" | awk '$4 == "UND" {print $0}' || true
-            echo "=== readelf dynamic needed libs ==="
-            readelf -d "$BIN" || true
-          else
-            echo "Build produced no binary at $BIN"
-            ls -la target/armv7-linux-androideabi/release || true
+          # search for produced binary (cargo-ndk may place artifacts under different targets)
+          echo "=== Finding produced binary ==="
+          BIN_PATH=$(find . -type f -name pumpkin -perm /111 -print -o -name pumpkin -print | head -n1 || true)
+          if [ -z "$BIN_PATH" ]; then
+            echo "Binary not found by name search — list likely release directories:"
+            find target -maxdepth 3 -type f -printf "%p\n" || true
             exit 1
           fi
+          echo "Found binary at: $BIN_PATH"
+          file "$BIN_PATH" || true
+          echo "=== readelf dynamic info ==="
+          readelf -Ws "$BIN_PATH" | awk '$4 == "UND" {print $0}' || true
+          readelf -d "$BIN_PATH" || true
+
+          # Print whether unwind symbol shows up as undefined
+          if readelf -Ws "$BIN_PATH" | awk '$4 == "UND" {print $0}' | grep -E "__gnu_Unwind_Find_exidx|unwind" >/dev/null 2>&1; then
+            echo "ERROR: unwind/gnu_unwind symbol still undefined in binary — build may fail on old Android."
+            exit 2
+          else
+            echo "GOOD: unwind symbol not unresolved (looks bundled or not needed)."
+          fi
+
+          # Move the binary to a predictable path for upload
+          mkdir -p ../artifacts
+          cp "$BIN_PATH" ../artifacts/pumpkin_android_armv7_api${ANDROID_PLATFORM}
+          ls -l ../artifacts || true
 
       - name: Upload Finished Server
         if: steps.check_version.outputs.match == 'false'
         uses: actions/upload-artifact@v6
         with:
           name: pumpkin-android-32bit
-          path: pumpkin-source/target/armv7-linux-androideabi/release/pumpkin
+          path: pumpkin-source/../artifacts/pumpkin_android_armv7_api${{ env.ANDROID_PLATFORM }}
 
       - name: Save Version ID
         if: steps.check_version.outputs.match == 'false'
